@@ -27,7 +27,8 @@ public func assertSnapshot<Value, Format>(
   timeout: TimeInterval = 5,
   file: StaticString = #file,
   testName: String = #function,
-  line: UInt = #line
+  line: UInt = #line,
+  snapshotPath: String? = nil
   ) {
 
   let failure = verifySnapshot(
@@ -38,7 +39,8 @@ public func assertSnapshot<Value, Format>(
     timeout: timeout,
     file: file,
     testName: testName,
-    line: line
+    line: line,
+    snapshotPath: snapshotPath
   )
   guard let message = failure else { return }
   XCTFail(message, file: file, line: line)
@@ -161,7 +163,8 @@ public func verifySnapshot<Value, Format>(
   timeout: TimeInterval = 5,
   file: StaticString = #file,
   testName: String = #function,
-  line: UInt = #line
+  line: UInt = #line,
+  snapshotPath: String? = nil
   )
   -> String? {
 
@@ -190,9 +193,15 @@ public func verifySnapshot<Value, Format>(
       }
 
       let testName = sanitizePathComponent(testName)
-      let snapshotFileUrl = snapshotDirectoryUrl
-        .appendingPathComponent("\(testName).\(identifier)")
-        .appendingPathExtension(snapshotting.pathExtension ?? "")
+      let snapshotFileUrl: URL
+      if let providedPath = snapshotPath {
+        snapshotFileUrl = URL(fileURLWithPath: providedPath, isDirectory: true)
+      }
+      else {
+        snapshotFileUrl = snapshotDirectoryUrl
+          .appendingPathComponent("\(testName).\(identifier)")
+          .appendingPathExtension(snapshotting.pathExtension ?? "")
+      }
       let fileManager = FileManager.default
       try fileManager.createDirectory(at: snapshotDirectoryUrl, withIntermediateDirectories: true)
 
@@ -218,20 +227,41 @@ public func verifySnapshot<Value, Format>(
         return "Couldn't snapshot value"
       }
 
+      let artifactsUrl = URL(
+        fileURLWithPath: ProcessInfo.processInfo.environment["SNAPSHOT_ARTIFACTS"] ?? NSTemporaryDirectory(), isDirectory: true
+      )
+      let artifactsSubUrl = artifactsUrl.appendingPathComponent(fileName)
+      try fileManager.createDirectory(at: artifactsSubUrl, withIntermediateDirectories: true)
+      var suffix = snapshotFileUrl.lastPathComponent
+
+      // if running in bazel, add -bazel to filename to differentiate from xcode test
+      #if BAZEL
+      suffix = snapshotFileUrl.deletingPathExtension().lastPathComponent + "-bazel." + (snapshotting.pathExtension ?? "")
+      #endif
+
+      let failedSnapshotFileUrl = artifactsSubUrl.appendingPathComponent(suffix)
+
       guard !recording, fileManager.fileExists(atPath: snapshotFileUrl.path) else {
-        try snapshotting.diffing.toData(diffable).write(to: snapshotFileUrl)
+        var url = snapshotFileUrl
+
+        #if BAZEL
+        url = failedSnapshotFileUrl
+        #endif
+
+        try snapshotting.diffing.toData(diffable).write(to: url)
+
         return recording
           ? """
             Record mode is on. Turn record mode off and re-run "\(testName)" to test against the newly-recorded snapshot.
 
-            open "\(snapshotFileUrl.path)"
+            open "\(url.path)"
 
             Recorded snapshot: …
             """
           : """
             No reference was found on disk. Automatically recorded snapshot: …
 
-            open "\(snapshotFileUrl.path)"
+            open "\(url.path)"
 
             Re-run "\(testName)" to test against the newly-recorded snapshot.
             """
@@ -244,12 +274,6 @@ public func verifySnapshot<Value, Format>(
         return nil
       }
 
-      let artifactsUrl = URL(
-        fileURLWithPath: ProcessInfo.processInfo.environment["SNAPSHOT_ARTIFACTS"] ?? NSTemporaryDirectory(), isDirectory: true
-      )
-      let artifactsSubUrl = artifactsUrl.appendingPathComponent(fileName)
-      try fileManager.createDirectory(at: artifactsSubUrl, withIntermediateDirectories: true)
-      let failedSnapshotFileUrl = artifactsSubUrl.appendingPathComponent(snapshotFileUrl.lastPathComponent)
       try snapshotting.diffing.toData(diffable).write(to: failedSnapshotFileUrl)
 
       if !attachments.isEmpty {
