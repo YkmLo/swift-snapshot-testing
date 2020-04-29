@@ -232,14 +232,7 @@ public func verifySnapshot<Value, Format>(
       )
       let artifactsSubUrl = artifactsUrl.appendingPathComponent(fileName)
       try fileManager.createDirectory(at: artifactsSubUrl, withIntermediateDirectories: true)
-      var suffix = snapshotFileUrl.lastPathComponent
-
-      // if running in bazel, add -bazel to filename to differentiate from xcode test
-      #if BAZEL
-      suffix = snapshotFileUrl.deletingPathExtension().lastPathComponent + "-bazel." + (snapshotting.pathExtension ?? "")
-      #endif
-
-      let failedSnapshotFileUrl = artifactsSubUrl.appendingPathComponent(suffix)
+      let failedSnapshotFileUrl = artifactsSubUrl.appendingPathComponent(snapshotFileUrl.lastPathComponent)
 
       guard !recording, fileManager.fileExists(atPath: snapshotFileUrl.path) else {
         var url = snapshotFileUrl
