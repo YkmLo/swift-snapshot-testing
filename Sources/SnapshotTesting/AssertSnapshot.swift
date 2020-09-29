@@ -193,6 +193,10 @@ public func verifySnapshot<Value, Format>(
       let snapshotFileUrl = snapshotDirectoryUrl
         .appendingPathComponent("\(fileName)-\(testName).\(identifier)")
         .appendingPathExtension(snapshotting.pathExtension ?? "")
+        
+      let failedSnapshotFileUrl = snapshotDirectoryUrl
+        .appendingPathComponent("\(fileName)-\(testName).\(identifier)-failed")
+        .appendingPathExtension(snapshotting.pathExtension ?? "")
 
       let fileManager = FileManager.default
       try fileManager.createDirectory(at: snapshotDirectoryUrl, withIntermediateDirectories: true)
@@ -259,12 +263,6 @@ public func verifySnapshot<Value, Format>(
         return nil
       }
 
-      let artifactsUrl = URL(
-        fileURLWithPath: ProcessInfo.processInfo.environment["SNAPSHOT_ARTIFACTS"] ?? NSTemporaryDirectory(), isDirectory: true
-      )
-      let artifactsSubUrl = artifactsUrl.appendingPathComponent(fileName)
-      try fileManager.createDirectory(at: artifactsSubUrl, withIntermediateDirectories: true)
-      let failedSnapshotFileUrl = artifactsSubUrl.appendingPathComponent(snapshotFileUrl.lastPathComponent)
       try snapshotting.diffing.toData(diffable).write(to: failedSnapshotFileUrl)
 
       if !attachments.isEmpty {
