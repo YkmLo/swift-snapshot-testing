@@ -195,7 +195,7 @@ public func verifySnapshot<Value, Format>(
         .appendingPathExtension(snapshotting.pathExtension ?? "")
         
       let failedSnapshotFileUrl = snapshotDirectoryUrl
-        .appendingPathComponent("\(fileName)-\(testName).\(identifier)-failed")
+        .appendingPathComponent("\(fileName)-\(testName).\(identifier)-ssfailed")
         .appendingPathExtension(snapshotting.pathExtension ?? "")
 
       let fileManager = FileManager.default
