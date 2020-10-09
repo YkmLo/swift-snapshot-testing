@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 /// Enhances failure messages with a command line diff tool expression that can be copied and pasted into a terminal.
@@ -39,6 +40,45 @@ public func assertSnapshot<Value, Format>(
     file: file,
     testName: testName,
     line: line
+  )
+  guard let message = failure else { return }
+  XCTFail(message, file: file, line: line)
+}
+
+/// Asserts that a given value matches a reference on disk or provided.
+///
+/// - Parameters:
+///   - value: A value to compare against a reference.
+///   - snapshotting: A strategy for serializing, deserializing, and comparing values.
+///   - name: An optional description of the snapshot.
+///   - recording: Whether or not to record a new reference.
+///   - timeout: The amount of time a snapshot must be generated in.
+///   - file: The file in which failure occurred. Defaults to the file name of the test case in which this function was called.
+///   - testName: The name of the test in which failure occurred. Defaults to the function name of the test case in which this function was called.
+///   - line: The line number on which failure occurred. Defaults to the line number on which this function was called.
+///   - referenceImage: The reference image to match to use if provided.
+public func assertSnapshot<Value>(
+  matching value: @autoclosure () throws -> Value,
+  as snapshotting: Snapshotting<Value, UIImage>,
+  named name: String? = nil,
+  record recording: Bool = false,
+  timeout: TimeInterval = 5,
+  file: StaticString = #file,
+  testName: String = #function,
+  line: UInt = #line,
+  referenceImage: UIImage? = nil
+  ) {
+
+  let failure = verifySnapshot(
+    matching: try value(),
+    as: snapshotting,
+    named: name,
+    record: recording,
+    timeout: timeout,
+    file: file,
+    testName: testName,
+    line: line,
+    referenceImage: referenceImage
   )
   guard let message = failure else { return }
   XCTFail(message, file: file, line: line)
@@ -161,11 +201,17 @@ public func verifySnapshot<Value, Format>(
   timeout: TimeInterval = 5,
   file: StaticString = #file,
   testName: String = #function,
-  line: UInt = #line
+  line: UInt = #line,
+  referenceImage: UIImage? = nil
   )
   -> String? {
 
     let recording = recording || record
+    
+    var isCI = false
+    if let ciEnv = ProcessInfo.processInfo.environment["IS_CI"] {
+      isCI = ciEnv == "true"
+    }
 
     do {
       let fileUrl = URL(fileURLWithPath: "\(file)", isDirectory: false)
@@ -177,29 +223,40 @@ public func verifySnapshot<Value, Format>(
           .appendingPathComponent("__Snapshots__")
           .appendingPathComponent(fileName)
 
-      let identifier: String
-      if let name = name {
-        identifier = sanitizePathComponent(name)
-      } else {
-        let counter = counterQueue.sync { () -> Int in
-          let key = snapshotDirectoryUrl.appendingPathComponent(testName)
-          counterMap[key, default: 0] += 1
-          return counterMap[key]!
-        }
-        identifier = String(counter)
+      let testName = sanitizePathComponent(testName)
+      let snapshotFileName = referenceFileName(for: testName, in: file)
+      let snapshotFailedFileName = referenceFileName(for: testName, in: file, failed: true)
+
+      let snapshotFileUrl: URL
+      let failedSnapshotFileUrl: URL
+      var isSnapshotDumpPathProvided = false
+      if let snapshotDumpPath = ProcessInfo.processInfo.environment["SNAPSHOT_DUMP_PATH"] {
+        let snapshotDumpPathUrl = URL(fileURLWithPath: snapshotDumpPath)
+        
+        snapshotFileUrl = snapshotDumpPathUrl
+          .appendingPathComponent(snapshotFileName)
+          .appendingPathExtension(snapshotting.pathExtension ?? "")
+          
+        failedSnapshotFileUrl = snapshotDumpPathUrl
+          .appendingPathComponent(snapshotFailedFileName)
+          .appendingPathExtension(snapshotting.pathExtension ?? "")
+        
+        isSnapshotDumpPathProvided = true
+      }
+      else {
+        snapshotFileUrl = snapshotDirectoryUrl
+          .appendingPathComponent(snapshotFileName)
+          .appendingPathExtension(snapshotting.pathExtension ?? "")
+          
+        failedSnapshotFileUrl = snapshotDirectoryUrl
+          .appendingPathComponent(snapshotFailedFileName)
+          .appendingPathExtension(snapshotting.pathExtension ?? "")
       }
 
-      let testName = sanitizePathComponent(testName)
-      let snapshotFileUrl = snapshotDirectoryUrl
-        .appendingPathComponent("\(fileName)-\(testName).\(identifier)")
-        .appendingPathExtension(snapshotting.pathExtension ?? "")
-        
-      let failedSnapshotFileUrl = snapshotDirectoryUrl
-        .appendingPathComponent("\(fileName)-\(testName).\(identifier)-ssfailed")
-        .appendingPathExtension(snapshotting.pathExtension ?? "")
-
       let fileManager = FileManager.default
-      try fileManager.createDirectory(at: snapshotDirectoryUrl, withIntermediateDirectories: true)
+      if !isCI && !isSnapshotDumpPathProvided {
+        try fileManager.createDirectory(at: snapshotDirectoryUrl, withIntermediateDirectories: true)
+      }
 
       let tookSnapshot = XCTestExpectation(description: "Took snapshot")
       var optionalDiffable: Format?
@@ -230,26 +287,43 @@ public func verifySnapshot<Value, Format>(
         return "Couldn't snapshot value"
       }
       
-      guard !recording, fileManager.fileExists(atPath: snapshotFileUrl.path) else {
-        try snapshotting.diffing.toData(diffable).write(to: snapshotFileUrl)
-        return recording
-          ? """
-            Record mode is on. Turn record mode off and re-run "\(testName)" to test against the newly-recorded snapshot.
+      guard !recording, (fileManager.fileExists(atPath: snapshotFileUrl.path) || referenceImage != nil) else {
+        if !isCI || isSnapshotDumpPathProvided {
+            try snapshotting.diffing.toData(diffable).write(to: snapshotFileUrl)
+            
+            return recording
+              ? """
+                Record mode is on. Turn record mode off and re-run "\(testName)" to test against the newly-recorded snapshot.
 
-            open "\(snapshotFileUrl.path)"
+                open "\(snapshotFileUrl.path)"
 
-            Recorded snapshot: …
-            """
-          : """
-            No reference was found on disk. Automatically recorded snapshot: …
+                Recorded snapshot: …
+                """
+              : """
+                No reference was found on disk. Automatically recorded snapshot: …
 
-            open "\(snapshotFileUrl.path)"
+                open "\(snapshotFileUrl.path)"
 
-            Re-run "\(testName)" to test against the newly-recorded snapshot.
-            """
+                Re-run "\(testName)" to test against the newly-recorded snapshot.
+                """
+        }
+        else {
+            return recording
+              ? """
+                Record mode for \(testName) is on.
+                """
+              : """
+                No reference was found on disk.
+                """
+        }
       }
-
+        
+      #if BAZEL
+      guard let data = referenceImage?.pngData() else { return "Data cannot be generated from UIImage." }
+      #else
       let data = try Data(contentsOf: snapshotFileUrl)
+      #endif
+
       let reference = snapshotting.diffing.fromData(data)
 
       #if os(iOS) || os(tvOS)
@@ -263,7 +337,9 @@ public func verifySnapshot<Value, Format>(
         return nil
       }
 
-      try snapshotting.diffing.toData(diffable).write(to: failedSnapshotFileUrl)
+      if !isCI || isSnapshotDumpPathProvided {
+        try snapshotting.diffing.toData(diffable).write(to: failedSnapshotFileUrl)
+      }
 
       if !attachments.isEmpty {
         #if !os(Linux)
@@ -297,8 +373,21 @@ public func verifySnapshot<Value, Format>(
 private let counterQueue = DispatchQueue(label: "co.pointfree.SnapshotTesting.counter")
 private var counterMap: [URL: Int] = [:]
 
-func sanitizePathComponent(_ string: String) -> String {
+public func sanitizePathComponent(_ string: String) -> String {
   return string
     .replacingOccurrences(of: "\\W+", with: "-", options: .regularExpression)
     .replacingOccurrences(of: "^-|-$", with: "", options: .regularExpression)
+}
+
+public func referenceFileName(for testName: String = #function, in file: StaticString = #file, failed: Bool = false) -> String {
+    let fileUrl = URL(fileURLWithPath: "\(file)", isDirectory: false)
+    let fileName = fileUrl.deletingPathExtension().lastPathComponent
+    let testName = sanitizePathComponent(testName)
+    var imageName = "\(fileName)-\(testName)"
+    
+    if failed {
+        imageName += "-ssfailed"
+    }
+    
+    return imageName
 }
