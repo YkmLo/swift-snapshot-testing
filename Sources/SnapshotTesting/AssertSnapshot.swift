@@ -254,8 +254,10 @@ public func verifySnapshot<Value, Format>(
       }
 
       let fileManager = FileManager.default
-      if !isCI && !isSnapshotDumpPathProvided {
+      if !isCI {
+        #if !BAZEL
         try fileManager.createDirectory(at: snapshotDirectoryUrl, withIntermediateDirectories: true)
+        #endif
       }
 
       let tookSnapshot = XCTestExpectation(description: "Took snapshot")
@@ -288,34 +290,54 @@ public func verifySnapshot<Value, Format>(
       }
       
       guard !recording, (fileManager.fileExists(atPath: snapshotFileUrl.path) || referenceImage != nil) else {
-        if !isCI || isSnapshotDumpPathProvided {
-            try snapshotting.diffing.toData(diffable).write(to: snapshotFileUrl)
+        #if !BAZEL
+        try snapshotting.diffing.toData(diffable).write(to: snapshotFileUrl)
             
-            return recording
-              ? """
-                Record mode is on. Turn record mode off and re-run "\(testName)" to test against the newly-recorded snapshot.
+        return recording
+          ? """
+            Record mode is on. Turn record mode off and re-run "\(testName)" to test against the newly-recorded snapshot.
 
-                open "\(snapshotFileUrl.path)"
+            open "\(snapshotFileUrl.path)"
 
-                Recorded snapshot: …
-                """
-              : """
-                No reference was found on disk. Automatically recorded snapshot: …
+            Recorded snapshot: …
+            """
+          : """
+            No reference was found on disk. Automatically recorded snapshot: …
 
-                open "\(snapshotFileUrl.path)"
+            open "\(snapshotFileUrl.path)"
 
-                Re-run "\(testName)" to test against the newly-recorded snapshot.
-                """
+            Re-run "\(testName)" to test against the newly-recorded snapshot.
+            """
+        #else
+        if !isCI && isSnapshotDumpPathProvided {
+          try snapshotting.diffing.toData(diffable).write(to: snapshotFileUrl)
+          
+          return recording
+            ? """
+              Record mode is on. Turn record mode off and re-run "\(testName)" to test against the newly-recorded snapshot.
+
+              open "\(snapshotFileUrl.path)"
+
+              Recorded snapshot: …
+              """
+            : """
+              No reference was found on disk. Automatically recorded snapshot: …
+
+              open "\(snapshotFileUrl.path)"
+
+              Re-run "\(testName)" to test against the newly-recorded snapshot.
+              """
         }
         else {
-            return recording
-              ? """
-                Record mode for \(testName) is on.
-                """
-              : """
-                No reference was found on disk.
-                """
+          return recording
+            ? """
+              Record mode for \(testName) is on.
+              """
+            : """
+              No reference was found on disk.
+              """
         }
+        #endif
       }
         
       #if BAZEL
@@ -337,9 +359,13 @@ public func verifySnapshot<Value, Format>(
         return nil
       }
 
-      if !isCI || isSnapshotDumpPathProvided {
+      #if !BAZEL
+      try snapshotting.diffing.toData(diffable).write(to: failedSnapshotFileUrl)
+      #else
+      if !isCI && isSnapshotDumpPathProvided {
         try snapshotting.diffing.toData(diffable).write(to: failedSnapshotFileUrl)
       }
+      #endif
 
       if !attachments.isEmpty {
         #if !os(Linux)
