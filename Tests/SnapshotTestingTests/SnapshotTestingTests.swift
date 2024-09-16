@@ -23,11 +23,11 @@ final class SnapshotTestingTests: XCTestCase {
   override func setUp() {
     super.setUp()
     diffTool = "ksdiff"
-//    record = true
+//    isRecording = true
   }
 
   override func tearDown() {
-    record = false
+    isRecording = false
     super.tearDown()
   }
 
@@ -160,6 +160,12 @@ final class SnapshotTestingTests: XCTestCase {
       assertSnapshot(matching: path, as: .elementsDescription, named: osName)
     }
     #endif
+  }
+
+  func testData() {
+    let data = Data([0xDE, 0xAD, 0xBE, 0xEF])
+
+    assertSnapshot(matching: data, as: .data)
   }
 
   func testEncodable() {
@@ -1063,6 +1069,15 @@ final class SnapshotTestingTests: XCTestCase {
     assertSnapshot(matching: view, as: .image(layout: .fixed(width: 300.0, height: 100.0)), named: "fixed")
     assertSnapshot(matching: view, as: .image(layout: .device(config: .tv)), named: "device")
     #endif
+  }
+
+  @available(*, deprecated)
+  func testIsRecordingProxy() {
+    SnapshotTesting.record = true
+    XCTAssertEqual(isRecording, true)
+
+    SnapshotTesting.record = false
+    XCTAssertEqual(isRecording, false)
   }
 }
 
